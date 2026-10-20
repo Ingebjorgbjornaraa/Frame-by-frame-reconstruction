@@ -1,0 +1,315 @@
+"""
+REGRESJON MED SVD PÅ BILDER
+Følger notatet «Regression med SVD» i «Kodene mine».
+
+TEORIEN (fra notatet)
+    Et polynom for hver R, G og B i hver pixel(hb)  =>  MANGE polynomer,
+    men de deler ÉN A-matrise.
+
+        p(t) = x_1 + x_2·t + x_3·t² + ... + x_{grad+1}·t^grad
+
+    A : én rad per foto, rad i = (1, t_i, t_i², ..., t_i^grad)
+    b : én rad per foto (frame), én kolonne per pixel(hb) og farge
+    x : én kolonne per pixel(hb) og farge = koeffisientene i polynomet
+
+    grad ≥ antall fotoer - 1  ->  interpolasjon (det vil vi IKKE ha)
+    grad < antall fotoer - 1  ->  overbestemt system  ->  løses med SVD
+
+    Pseudoinversen A†:
+        1. AᵀA
+        2. egenverdier λ og egenvektorer v_k til AᵀA   ->  V
+        3. σ_k = √λ_k                                   ->  Σ, Σ⁻¹
+        4. u_k = (1/σ_k) · A · v_k                      ->  U
+        5. A† = V Σ⁻¹ Uᵀ
+
+    x = A† b
+
+    x regnes ut ETT FOTO OM GANGEN, så vi aldri trenger hele b i minnet:
+        x = (kolonne 0 av A†)·(rad 0 av b) + (kolonne 1 av A†)·(rad 1 av b) + ...
+    Rad i av b er bare foto i, så vi leser ett foto, legger til bidraget, og tar neste.
+
+    Nå har vi x, og kan lage hvilken frame vi vil, for hvilken t vi vil:
+        a(t) = (1, t, t², ..., t^grad)       («en ny rad av A»)
+        frame(t) = a(t) · x
+
+HVORDAN JEG BRUKER DET («how I use it»)
+    - scriptet bruker bildene i bildemappen som FRA_BILDE, TIL_BILDE og BRUK_HVERT velger
+    - foto nr. i (blant de valgte) står på t = i  (t = 0, 1, 2, ..., n)
+    - for hver pixel(hb) har vi R, G og B -> tre separate polynomer
+    - A og A† regnes ut ÉN gang og brukes for alle pixler og farger
+    - frames lages både på de ekte t-ene og mellom dem (STEG)
+    - fotoene leses ett og ett, så det går fint med tusenvis av frames
+"""
+
+import os
+import numpy as np
+from PIL import Image, ImageOps
+
+
+# =====================================================================
+# INNSTILLINGER — det eneste du trenger å endre
+# =====================================================================
+
+BILDER = "eriksamtale"   # navnet på mappen med bildene: "testbilder", "eriksamtale", ...
+
+# Hvilke bilder i mappen som brukes (nummer = plassen i mappen, sortert etter filnavn, første = 0)
+FRA_BILDE = 0       # første bilde som tas med
+TIL_BILDE = None    # siste bilde som tas med. None = helt til slutten av mappen
+BRUK_HVERT = 1      # 1 = alle bildene, 3 = hvert 3., 30 = hvert 30., ...
+                         # (scriptet leter oppover fra «kode/regresjon» til det finner den)
+
+GRAD = 20          # 1 = rett linje, 2 = parabel, 3 = S-form, ...
+                  # må være mindre enn antall fotoer - 1 (ellers interpolasjon)
+
+STEG = 1          # avstand mellom framene i t. 1 = én frame per foto (samme lengde
+                  # som originalen), 0.5 = én ekstra frame mellom hvert foto, ...
+
+MAKS_STØRRELSE = 1920   # lengste side i pixler. Eriksamtale er allerede 1920 × 1080.
+                        # Testbildene (4608 × 3456) skaleres ned til 1920 × 1440.
+                        # None = full størrelse.
+
+SKALER_T = True   # Se forklaring i del 1. Gir de SAMME framene, bare mer nøyaktig
+                  # regning på datamaskinen. Har nesten ingenting å si for grad 1–3.
+
+
+# Finn mappene (trenger ikke endres)
+MAPPE = os.path.dirname(os.path.abspath(__file__))   # mappen dette scriptet ligger i
+BILDEMAPPE = None
+sted = MAPPE
+for _ in range(4):                                   # MAPPE, så ett, to og tre nivåer opp
+    if os.path.isdir(os.path.join(sted, BILDER)):
+        BILDEMAPPE = os.path.join(sted, BILDER)
+        break
+    sted = os.path.dirname(sted)
+if BILDEMAPPE is None:
+    raise SystemExit(f"Fant ikke mappen «{BILDER}» i nærheten av {MAPPE}.")
+UTMAPPE = os.path.join(MAPPE, f"resultat_{BILDER}_grad{GRAD}")
+
+
+# =====================================================================
+# 1. TEORIEN — rett fra notatet
+# =====================================================================
+
+def tid(bildenummer, n, skaler):
+    """
+    Hvilken t et foto står på. Uten skalering: t = bildenummer (0, 1, ..., n),
+    akkurat som i notatet.
+
+    Med skalering: t går fra -1 (første foto) til 1 (siste foto) i stedet.
+    Det gir NØYAKTIG de samme kurvene og framene (x-tallene blir bare andre),
+    men datamaskinen runder av, og store t (som 25^8) gjør én σ veldig liten.
+    Da blir 1/σ i Σ⁻¹ enorm og forsterker avrundingsfeil. Med t mellom -1 og 1
+    skjer ikke det.
+    """
+    if not skaler:
+        return bildenummer
+    return (bildenummer - n / 2) / (n / 2)
+
+
+def lag_A(t_verdier, grad):
+    """A: én rad per foto, rad i = (1, t_i, t_i², ..., t_i^grad)
+    = tallene som står foran x_1, x_2, ... i ligningen for foto i."""
+    return np.array([[t ** p for p in range(grad + 1)] for t in t_verdier], dtype=float)
+
+
+def a(t, grad):
+    """a(t) = (1, t, t², ..., t^grad) — en ny rad av A, for en t vi velger selv"""
+    return np.array([t ** p for p in range(grad + 1)], dtype=float)
+
+
+def pseudoinvers(A, vis=False):
+    """A† = V Σ⁻¹ Uᵀ, steg for steg som i notatet"""
+
+    # 1. AᵀA
+    ATA = A.T @ A
+
+    # 2. egenverdier λ og egenvektorer v_k til AᵀA (største først)
+    λ, V = np.linalg.eigh(ATA)
+    rekkefølge = np.argsort(λ)[::-1]
+    λ = λ[rekkefølge]
+    V = V[:, rekkefølge]
+
+    # 3. σ_k = √λ_k, Σ og Σ⁻¹
+    σ = np.sqrt(λ)
+    Σ = np.diag(σ)
+    Σ_inv = np.diag(1 / σ)
+
+    # 4. u_k = (1/σ_k) · A · v_k
+    U = np.zeros((A.shape[0], len(σ)))
+    for k in range(len(σ)):
+        U[:, k] = (1 / σ[k]) * A @ V[:, k]
+
+    # 5. A† = V Σ⁻¹ Uᵀ
+    A_pluss = V @ Σ_inv @ U.T
+
+    if vis:
+        print("AᵀA =\n", ATA)
+        print("λ =", λ, "  σ =", σ)
+        print("V =\n", V)
+        print("Σ =\n", Σ)
+        print("Σ⁻¹ =\n", Σ_inv)
+        print("U =\n", U)
+        print("A† · 6 =\n", A_pluss * 6)
+    return A_pluss
+
+
+def frame(t, grad, x):
+    """frame(t) = a(t) · x  — én verdi per pixel(hb) og farge"""
+    return a(t, grad) @ x
+
+
+# =====================================================================
+# 2. SJEKK MOT EKSEMPELET I NOTATET
+#    t = 0, 1, 2, grad 1, to pixler
+#    Fortegnet på en kolonne i V og U kan bli snudd (begge er like riktige),
+#    men A†, x og frame(1.5) blir alltid de samme.
+# =====================================================================
+
+np.set_printoptions(precision=3, suppress=True)
+
+A_eks = lag_A([0, 1, 2], grad=1)
+#                pixel 1,1           pixel 1,2
+#               R    G    B        R    G    B
+b_eks = np.array([[10,  40,  90,     200, 100,  50],     # t = 0
+                  [20,  35,  88,     195, 102,  55],     # t = 1
+                  [15,  38,  91,     190, 105,  52]],    # t = 2
+                 dtype=float)
+
+print("Eksempelet fra notatet:")
+print("A =\n", A_eks)
+A_pluss_eks = pseudoinvers(A_eks, vis=True)      # A† · 6 = [[5, 2, -1], [-3, 0, 3]]
+x_eks = A_pluss_eks @ b_eks
+print("x = A† b =\n", x_eks)                      # [[12.5 38.7 89.2 200  99.8 51.3]
+                                                  #  [ 2.5 -1.0  0.5  -5   2.5  1.0]]
+print("frame(1.5) =", frame(1.5, 1, x_eks))       # [16.25 37.2 89.9 192.5 103.6 52.8]
+
+# Samme x, regnet ett foto om gangen (slik del 5 gjør med de ekte bildene):
+#   x = (kolonne 0 av A†)·(rad 0 av b) + (kolonne 1 av A†)·(rad 1 av b) + (kolonne 2 av A†)·(rad 2 av b)
+x_ett_om_gangen = np.zeros_like(x_eks)
+for i in range(3):
+    x_ett_om_gangen += A_pluss_eks[:, [i]] @ b_eks[[i], :]
+print("x regnet ett foto om gangen =\n", x_ett_om_gangen)   # akkurat det samme
+print()
+
+
+# =====================================================================
+# 3. FINN ALLE BILDENE I MAPPEN
+#    Bildene sorteres etter filnavn, så rekkefølgen i mappen blir rekkefølgen i tid.
+#    Vi leser dem ikke inn ennå — bare finner navnene og størrelsen.
+# =====================================================================
+
+ALLE_BILDEFILER = [f for f in sorted(os.listdir(BILDEMAPPE))
+                   if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+slutt = None if TIL_BILDE is None else TIL_BILDE + 1
+BILDEFILER = ALLE_BILDEFILER[FRA_BILDE:slutt:BRUK_HVERT]
+print(f"Bruker {len(BILDEFILER)} av {len(ALLE_BILDEFILER)} bilder "
+      f"(fra nr. {FRA_BILDE}, til {'slutten' if TIL_BILDE is None else f'nr. {TIL_BILDE}'}, "
+      f"hvert {BRUK_HVERT}.)")
+
+
+størrelser = {}   # for hver størrelse: (høyde, bredde, 3) til det første fotoet som ble åpnet
+
+
+def last_foto(filnavn, størrelse=MAKS_STØRRELSE):
+    """Åpner ett foto som en tabell høyde × bredde × 3 (R, G, B), tall fra 0 til 255.
+    størrelse = lengste side i pixler. None = full størrelse.
+    Det første fotoet bestemmer hvor stort det blir, og alle de andre må være like store."""
+    foto = ImageOps.exif_transpose(Image.open(os.path.join(BILDEMAPPE, filnavn))).convert("RGB")
+    if størrelse is not None:
+        foto.thumbnail((størrelse, størrelse))
+    foto = np.asarray(foto, dtype=float)
+    if størrelse not in størrelser:
+        størrelser[størrelse] = foto.shape
+    elif foto.shape != størrelser[størrelse]:
+        raise SystemExit(f"{filnavn} har størrelse {foto.shape}, men {BILDEFILER[0]} har "
+                         f"{størrelser[størrelse]}. Alle bildene må være like store.")
+    return foto
+
+
+høyde, bredde, _ = last_foto(BILDEFILER[0]).shape
+antall_fotoer = len(BILDEFILER)
+n = antall_fotoer - 1
+
+print(f"Fant {antall_fotoer} bilder i {BILDEMAPPE}")
+print(f"  foto 0 (t = 0)  →  {BILDEFILER[0]}")
+print(f"  foto {n} (t = {n})  →  {BILDEFILER[-1]}")
+print(f"Bildene er {høyde} × {bredde} pixler → {3 * høyde * bredde:,} polynomer, men bare ÉN A.")
+print()
+
+
+# =====================================================================
+# 4. SETT OPP A
+#    b er fortsatt «én rad per foto, én kolonne per pixel(hb) og farge»,
+#    men vi bygger den aldri helt — rad i av b er bare foto i, rullet ut.
+# =====================================================================
+
+if GRAD >= antall_fotoer - 1:
+    raise SystemExit(f"Grad {GRAD} med {antall_fotoer} fotoer gir INTERPOLASJON. "
+                     f"For regresjon må graden være høyst {antall_fotoer - 2}.")
+
+t_verdier = [tid(i, n, SKALER_T) for i in range(antall_fotoer)]
+A = lag_A(t_verdier, GRAD)
+
+print(f"A er {A.shape[0]} × {A.shape[1]}  (ett foto per rad, grad {GRAD} → {GRAD + 1} kolonner)")
+print(f"b ville vært {antall_fotoer} × {3 * høyde * bredde:,}  (leses ett foto om gangen)")
+print()
+
+
+# =====================================================================
+# 5. FINN A† OG x
+#    x = A† b, regnet ett foto om gangen:
+#    x = Σ (kolonne i av A†) · (rad i av b)
+# =====================================================================
+
+A_pluss = pseudoinvers(A)
+
+x = np.zeros((GRAD + 1, høyde * bredde * 3))
+vis_hver = max(1, antall_fotoer // 20)                # skriv fremdrift ca. 20 ganger
+
+print(f"Regner ut x fra {antall_fotoer} fotoer:")
+for i, filnavn in enumerate(BILDEFILER):
+    bilde = last_foto(filnavn)
+
+    rad_i = bilde.reshape(1, -1)                      # rad i av b
+    x += A_pluss[:, [i]] @ rad_i                      # (kolonne i av A†) · (rad i av b)
+
+    if i % vis_hver == 0 or i == n:
+        print(f"  foto {i:>5} av {n}")
+
+print(f"x er {x.shape[0]} × {x.shape[1]:,}")
+
+# Hvor mye bommer regresjonen på fotoene? (0 ville betydd interpolasjon)
+# Rad i av A ganget med x er regresjonens versjon av foto i.
+# Vi sjekker opptil 50 fotoer spredt utover, så det ikke tar for lang tid.
+utvalg = np.unique(np.linspace(0, n, min(50, antall_fotoer)).astype(int))
+kvadrater = [np.mean((A[i] @ x - last_foto(BILDEFILER[i]).reshape(-1)) ** 2) for i in utvalg]
+print(f"Gjennomsnittlig bom på de ekte fotoene: {np.sqrt(np.mean(kvadrater)):.1f} (av 0–255, "
+      f"målt på {len(utvalg)} fotoer)")
+print()
+
+
+# =====================================================================
+# 6. LAG FRAMES:  frame(t) = a(t) · x
+#    Pixelverdier må ligge mellom 0 og 255 for å kunne lagres,
+#    så verdier utenfor klippes til nærmeste kant.
+# =====================================================================
+
+os.makedirs(UTMAPPE, exist_ok=True)
+bildenumre = np.arange(0, n + STEG / 2, STEG)
+
+vis_hver = max(1, len(bildenumre) // 20)
+
+print(f"Lager {len(bildenumre)} frames, fra foto 0 til foto {n}:")
+for nr, i in enumerate(bildenumre):
+    t = tid(i, n, SKALER_T)
+    ny = frame(t, GRAD, x).reshape(høyde, bredde, 3)
+
+    if nr % vis_hver == 0 or nr == len(bildenumre) - 1:
+        type_ = "ekte foto" if i == int(i) else "mellom"
+        print(f"  foto {i:>8.2f}  ({type_:9})  verdier fra {ny.min():>6.0f} til {ny.max():>6.0f}")
+
+    lagres = np.clip(np.round(ny), 0, 255).astype(np.uint8)
+    Image.fromarray(lagres).save(os.path.join(UTMAPPE, f"{nr:05d}_foto{i:07.2f}.jpg"), quality=98)
+
+print()
+print(f"Ferdig. Bildene ligger i {UTMAPPE}")
