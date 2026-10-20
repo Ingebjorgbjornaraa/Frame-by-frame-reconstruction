@@ -35,7 +35,7 @@ Regression creates all new frames and looks for the best approximating function.
 We can make a matrix where the rows are time t and the columns are the colour values R (red), G (green) and B (blue), repeating for each pixel at a position width w, height h.
 
 ```
-   pixel(1,1)            pixel(1,2)
+             pixel(1,1)   pixel(1,2)
               R  G  B      R  G  B    . . .
           ┌──────────────────────────────┐
     t = 0 │         ---frame 1---        │  
