@@ -71,7 +71,7 @@ X ≈ Σ   a^(s) ∘ b^(s) ∘ c^(s)  (∘ is Khatri-Rao)
 We choose the rank according to how exact we want it. We have the matrices A ∈ ℝ^(time × rank), B ∈ ℝ^(space × rank), C ∈ ℝ^(channel × rank)
 
 ```
-   a1 a2 …             b1 b2 …      c1 c2 …
+      a1 a2 …           b1 b2 …     c1 c2 …
 t=0 ┌       ┐ pixel 1 ┌       ┐ R ┌       ┐
 t=1 │   A   │ pixel 2 │   B   │ G │   C   │
  ⋮  └       ┘    ⋮    └       ┘ B └       ┘
