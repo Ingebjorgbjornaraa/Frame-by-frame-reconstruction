@@ -8,17 +8,15 @@ To conjure up more frames than we have, we can use Lagrange interpolation. It cr
 Our points are each R (red), G (green) and B (blue) value in each pixel at a position width w, height h, at a time t.
 
 For each time t we create
-
-               n    (x - x_j)
-  ℓ_t(x)  =    ∏   -----------
+                n    (x - x_j)
+  ℓ_t(x)  =     ∏   -----------
              j = 0  (x_t - x_j)
              j ≠ t
 
 So now we can use this for every pixel(w,h), to make a polynomial for each colour going through that position, p_n^R, p_n^G, p_n^B,
 using
-
-                n
-  p_n^(c)(x) =  Σ   ℓ_t(x) · y_t
+                 n
+  p_n^(c)(x) =   Σ   ℓ_t(x) · y_t
               t = 0
 
 where y_t is the value of the colour c at that time.
@@ -31,13 +29,13 @@ Regression creates all new frames and looks for the best approximating function.
 
 We can make a matrix where the rows are time t and the columns are the colour values R (red), G (green) and B (blue), repeating for each pixel at a position width w, height h.
 
-             pixel(1,1)   pixel(1,2)
+   pixel(1,1)            pixel(1,2)
               R  G  B      R  G  B    . . .
-           ┌──────────────────────────────┐
-     t = 0 │         ---frame 1---        │  
-b =  t = 1 │         ---frame 2---        │
+          ┌──────────────────────────────┐
+    t = 0 │         ---frame 1---        │  
+b = t = 1 │         ---frame 2---        │
 . . . 
-           └──────────────────────────────┘
+          └──────────────────────────────┘
 
 b ∈ ℝ^(number of frames × w·h·3)
 
@@ -57,13 +55,13 @@ A video can be made into a tensor X ∈ ℝ^(time × space × channel) where the
 
 Canonical polyadic decomposition approximates X as a sum of rank 1 tensors:
 
-        rank
-  X  ≈   Σ   a^(s) ∘ b^(s) ∘ c^(s)  (∘ is Khatri-Rao)
-        s=1
+  rank
+X ≈ Σ   a^(s) ∘ b^(s) ∘ c^(s)  (∘ is Khatri-Rao)
+   s=1
 
 We choose the rank according to how exact we want it. We have the matrices A ∈ ℝ^(time × rank), B ∈ ℝ^(space × rank), C ∈ ℝ^(channel × rank)
 
-     a1 a2 …           b1 b2 …     c1 c2 …
+   a1 a2 …             b1 b2 …      c1 c2 …
 t=0 ┌       ┐ pixel 1 ┌       ┐ R ┌       ┐
 t=1 │   A   │ pixel 2 │   B   │ G │   C   │
  ⋮  └       ┘    ⋮    └       ┘ B └       ┘
