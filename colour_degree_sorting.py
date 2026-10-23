@@ -102,8 +102,8 @@ assert K <= 255, "the key is stored as uint8"
 # 1. THE THEORY — straight from the note
 # =====================================================================
 
-# The three channels as unit vectors. 120 degrees between them because the channels
-# are equal — and it is exactly the even distribution that makes them
+# The three channels as unit vectors on the hue colour wheel: red at 0°, green at 120°, blue at 240°.
+# They are equal — and it is exactly the even distribution that makes them
 # sum to the zero vector.
 U_R = (math.cos(math.radians(0)),   math.sin(math.radians(0)))     # ( 1   ,  0    )
 U_G = (math.cos(math.radians(120)), math.sin(math.radians(120)))   # (-1/2 , +√3/2)
