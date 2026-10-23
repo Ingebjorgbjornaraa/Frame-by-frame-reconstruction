@@ -59,7 +59,7 @@ Canonical polyadic decomposition approximates X as a sum of rank 1 tensors:
 
 ```
   rank
-X ≈ Σ   a^(s) ∘ b^(s) ∘ c^(s)  (∘ is Khatri-Rao)
+X ≈ Σ  a^(s) ⊚ b^(s) ⊚ c^(s)   (⊚ is the outer product)
    s=1
 ```
 
