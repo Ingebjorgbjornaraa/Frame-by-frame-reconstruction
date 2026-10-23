@@ -59,9 +59,9 @@ MIN_LENGTH = 0.0     # 0 = sort everything. Pixels with shorter |h| than this ar
                      # almost grey and cannot be sorted meaningfully; they
                      # are left as they are. Try 10 if it gets grainy.
 
-MAX_SIZE = 960       # longest side in the out-image
+MAX_SIZE = 1920       # longest side in the out-image
 
-K = 63         # k in Counting-Sort(A, n, k): number of colour degree buckets minus one.
+K = 255         # k in Counting-Sort(A, n, k): number of colour degree buckets minus one.
                # 360/(K+1) degrees per bucket. Measured on mamma video, k=63,
                # k=127 and k=255 are visually the same (74–88 % of the pixels completely
                # identical, average deviation 5 of 255), but k=63 is 3.3 times
